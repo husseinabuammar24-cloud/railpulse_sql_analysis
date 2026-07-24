@@ -16,6 +16,7 @@ load, platform bottlenecks, service frequency, and accessibility coverage
 - [Project Description](#project-description)
 - [Entity Relationship Diagram](#entity-relationship-diagram)
 - [Tech Stack](#tech-stack)
+- [Repo Structure](#repo-structure)
 - [Getting Started](#getting-started)
 - [Analysis Questions & Results](#analysis-questions--results)
 - [Contributors](#contributors)
@@ -75,6 +76,34 @@ An alternative tool for viewing or editing it is [drawdb](https://www.drawdb.app
 
 ---
 
+## Repo Structure
+
+```
+railpulse_sql_analysis/
+├── sql/                             # One self-contained query per analytical question
+│   ├── 01_peak_hour.sql
+│   ├── 02_platform_bottlenecks.sql
+│   ├── 03_morning_destinations.sql
+│   ├── 04_service_frequency.sql
+│   └── 05_accessibility_audit.sql
+├── src/                             # Raw GTFS static feed and its extraction notebook
+│   ├── nmbssncb_static.zip          # Downloaded GTFS static feed (zipped)
+│   └── sncb_static_txt_files.ipynb  # Notebook used to fetch/unzip the feed into src/data/
+├── ERD.webp                         # Entity Relationship Diagram export
+├── README.md
+└── main.py                          # CLI: creates tables, imports GTFS data into SQLite
+```
+
+> **Note:** The unzipped GTFS CSVs (`src/data/*.txt`) and the generated
+> SQLite database (`railpulse.db`, `.db-shm`, `.db-wal`) are **not** tracked
+> in version control — several of these files exceed GitHub's 100MB
+> per-file limit. Both are fully reproducible: run
+> `src/sncb_static_txt_files.ipynb` to fetch and unzip
+> `nmbssncb_static.zip` into `src/data/`, then run `main.py` to build
+> `railpulse.db` from those CSVs.
+
+---
+
 ## Getting Started
 
 ```bash
@@ -89,7 +118,11 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 # 3. Install dependencies
 pip install requests
 
-# 4. Fetch the GTFS static feed and build the database
+# 4. Unzip the GTFS static feed into src/data/
+#    Run src/sncb_static_txt_files.ipynb (or manually unzip
+#    src/nmbssncb_static.zip into src/data/)
+
+# 5. Build the database from the unzipped CSVs
 python main.py
 # → choose option 3: "Create tables and insert data"
 ```
@@ -269,4 +302,3 @@ potential data-quality issue rather than an actual service shortfall.
 - **Day 3:** Write and test the five core analytical `.sql` queries
 - **Day 4:** README write-up, visuals, `SQL&DB_theory.md`, prep for team feedback
 - **Deadline:** 20/07/2026, 17:00
-
