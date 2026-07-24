@@ -44,27 +44,3 @@ SELECT
 FROM route_stats
 ORDER BY total_trips DESC
 LIMIT 15;
-
-
-
-
-'''
-
-route_short_name  route_long_name                                 total_trips  wheelchair_accessible_pct  bikes_allowed_pct  either_amenity_pct
-----------------  ----------------------------------------------  -----------  -------------------------  -----------------  ------------------
-IC                Anvers-Central -- Charleroi-Central             3081         0.0                        100.0              100.0             
-S2                Louvain -- Braine-le-Comte                      2674         0.0                        100.0              100.0             
-IC                Eupen -- Ostende                                2210         0.0                        100.0              100.0             
-S10               Termonde -- Alost                               1782         0.0                        100.0              100.0             
-IC                Brussels Airport-Zaventem -- Gand-Saint-Pierre  1734         0.0                        100.0              100.0             
-IC                Anvers-Central -- Hasselt                       1649         0.0                        100.0              100.0             
-IC                Liège-Guillemins -- Knokke                      1577         0.0                        100.0              100.0             
-IC                Brussels Airport-Zaventem -- Mons               1569         0.0                        100.0              100.0             
-IC                Luxembourg (LU) -- Bruxelles-Midi               1435         0.0                        100.0              100.0             
-IC                Bruxelles-Midi -- Anvers-Central                1398         0.0                        100.0              100.0             
-S1                Nivelles -- Anvers-Central                      1350         0.0                        100.0              100.0             
-EC                Rotterdam Centraal (NL) -- Bruxelles-Midi       1191         0.0                        100.0              100.0             
-IC                Brussels Airport-Zaventem -- Tournai            1167         0.0                        100.0              100.0             
-IC                Bruxelles-Midi -- Arlon                         1092         0.0                        100.0              100.0             
-IC                Lille Flandres (FR) -- Anvers-Central           1080         0.0                        100.0              100.0             
-'''
