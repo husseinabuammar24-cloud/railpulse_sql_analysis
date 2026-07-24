@@ -29,16 +29,3 @@ WHERE stop_times.departure_time < '12:00:00'
 GROUP BY trips.trip_headsign 
 ORDER BY trip_count DESC
 LIMIT 3;
-
-
-'''
-OUTPUT:
-===============
-
-trip_headsign   trip_count
---------------  ----------
-Anvers-Central  3930      
-Bruxelles-Midi  3150      
-Louvain         2505      
-
-'''
