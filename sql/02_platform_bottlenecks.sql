@@ -23,10 +23,3 @@ GROUP BY platform_stop.platform_code
 ORDER BY departure_count DESC
 LIMIT 3;
 
-
--- Output: 
--- platform_code  departure_count
--------------  ---------------
---3              11982          
---4              10515          
---2              7473           
