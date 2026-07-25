@@ -24,6 +24,8 @@ class MenuChoice(StrEnum):
     EXIT = "4"
 
 
+# Groupings used to decide which menu selections trigger table creation
+# and/or data import in the main loop.
 CREATE_TABLE_CHOICES = {MenuChoice.CREATE_TABLES, MenuChoice.CREATE_AND_IMPORT}
 IMPORT_DATA_CHOICES = {MenuChoice.IMPORT_DATA, MenuChoice.CREATE_AND_IMPORT}
 MENU_LABELS = {
@@ -33,6 +35,9 @@ MENU_LABELS = {
     MenuChoice.EXIT: "Exit",
 }
 ImportResult: TypeAlias = tuple[int, int]
+
+# Names of all indexes created on the GTFS tables. Kept as a single source
+# of truth so they can be dropped before a bulk import and recreated after.
 INDEX_NAMES = (
     "idx_routes_agency_id",
     "idx_calendar_dates_service_id",
@@ -47,6 +52,8 @@ INDEX_NAMES = (
     "idx_transfers_to_trip_id",
     "idx_translations_dedupe",
 )
+
+# Maps each GTFS table name to the CSV file that feeds it.
 FILE_MAP = {
     "agency": DATA_DIR / "agency.txt",
     "routes": DATA_DIR / "routes.txt",
@@ -59,6 +66,8 @@ FILE_MAP = {
     "feed_info": DATA_DIR / "feed_info.txt",
     "translations": DATA_DIR / "translations.txt",
 }
+
+# Columns that must be present in a CSV file before we attempt to import it.
 REQUIRED_COLUMNS = {
     "agency": {"agency_id"},
     "routes": {"route_id"},
@@ -66,6 +75,9 @@ REQUIRED_COLUMNS = {
     "stops": {"stop_id"},
     "stop_times": {"trip_id", "stop_sequence"},
 }
+
+# Import order matters: parent tables (e.g. agency, routes) must be loaded
+# before child tables that reference them via foreign keys.
 IMPORT_ORDER = [
     "agency",
     "routes",
@@ -257,6 +269,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_translations_dedupe
 
 def create_tables(connection: sqlite3.Connection) -> None:
     """Create GTFS tables if they do not already exist."""
+    # Base schema creation, followed by any legacy-schema migrations needed
+    # to bring an older database up to the current expected shape.
     connection.executescript(TABLES_SQL)
     ensure_transfers_nullable_trip_ids(connection)
     ensure_translations_nullable_ids(connection)
@@ -265,15 +279,21 @@ def create_tables(connection: sqlite3.Connection) -> None:
 
 def ensure_transfers_nullable_trip_ids(connection: sqlite3.Connection) -> None:
     """Migrate legacy transfers schema where trip IDs were incorrectly NOT NULL."""
+    # PRAGMA table_info returns one row per column; index 0 is missing if the
+    # table doesn't exist yet, so an empty result means there's nothing to migrate.
     columns_info = connection.execute("PRAGMA table_info(transfers)").fetchall()
     if not columns_info:
         return
 
+    # Column index 1 is the column name, index 3 is the "notnull" flag (0/1).
     not_null_by_column = {row[1]: row[3] for row in columns_info}
     if not_null_by_column.get("from_trip_id", 0) == 0 and not_null_by_column.get("to_trip_id", 0) == 0:
+        # Already on the desired schema (both columns nullable); nothing to do.
         return
 
     LOGGER.info("Migrating transfers schema to allow NULL trip IDs...")
+    # SQLite can't ALTER a column's NOT NULL constraint directly, so rebuild
+    # the table with the correct schema and copy the existing rows over.
     connection.executescript(
         """
         CREATE TABLE transfers_new (
@@ -317,8 +337,11 @@ def ensure_translations_nullable_ids(connection: sqlite3.Connection) -> None:
     """Migrate translations schema to keep nullable IDs and PK(table_name, field_name, field_value, language)."""
     columns_info = connection.execute("PRAGMA table_info(translations)").fetchall()
     if not columns_info:
+        # Table doesn't exist yet; nothing to migrate.
         return
 
+    # Column index 3 is the "notnull" flag; index 5 is the column's position
+    # within the primary key (0 means "not part of the PK").
     not_null_by_column = {row[1]: row[3] for row in columns_info}
     pk_columns = [
         row[1]
@@ -332,9 +355,12 @@ def ensure_translations_nullable_ids(connection: sqlite3.Connection) -> None:
         and not_null_by_column.get("record_sub_id", 0) == 0
         and pk_columns == desired_pk_columns
     ):
+        # Schema already matches what we want; nothing to migrate.
         return
 
     LOGGER.info("Migrating translations schema to keep nullable IDs and PK(table_name, field_name, field_value, language)...")
+    # As with transfers, SQLite requires a rebuild-and-copy to change the
+    # primary key definition or nullability of existing columns.
     connection.executescript(
         """
         CREATE TABLE translations_new (
@@ -375,6 +401,8 @@ def ensure_translations_nullable_ids(connection: sqlite3.Connection) -> None:
 
 def ensure_translations_unique_index(connection: sqlite3.Connection) -> None:
     """Ensure idempotent import for translations even when record IDs are NULL."""
+    # ifnull(...) coalesces NULLs to empty string so the UNIQUE constraint
+    # still applies consistently across rows with missing optional IDs.
     connection.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_translations_dedupe
@@ -403,6 +431,8 @@ def analyze_database(connection: sqlite3.Connection) -> None:
 
 def drop_indexes(connection: sqlite3.Connection) -> None:
     """Drop GTFS indexes before bulk import to speed up inserts."""
+    # Dropping indexes before a large import avoids the overhead of updating
+    # them on every row insert; they're recreated afterward in one pass.
     for index_name in INDEX_NAMES:
         connection.execute(f'DROP INDEX IF EXISTS "{index_name}"')
 
@@ -418,8 +448,10 @@ def import_csv_to_table(
         reader = csv.DictReader(handle)
         columns = reader.fieldnames
         if not columns:
+            # Empty file (no header row); nothing to import.
             return 0, 0
 
+        # Fail fast if the CSV is missing any column the schema depends on.
         required = REQUIRED_COLUMNS.get(table_name, set())
         missing = required - set(columns)
         if missing:
@@ -428,6 +460,9 @@ def import_csv_to_table(
 
         placeholders = ", ".join(["?"] * len(columns))
         column_sql = ", ".join([f'"{column}"' for column in columns])
+        # ON CONFLICT DO NOTHING makes repeated imports idempotent: rows that
+        # already exist (matching a primary key) are silently skipped rather
+        # than raising an error.
         insert_sql = (
             f'INSERT INTO "{table_name}" ({column_sql}) VALUES ({placeholders}) '
             f'ON CONFLICT DO NOTHING'
@@ -441,6 +476,8 @@ def import_csv_to_table(
 
         for row in reader:
             total_rows += 1
+            # Treat empty strings from the CSV as NULL rather than as
+            # literal empty text, which matches GTFS conventions.
             values = tuple(
                 None if (value := row.get(column, "")) == "" else value
                 for column in columns
@@ -450,19 +487,25 @@ def import_csv_to_table(
             if progress_every_rows > 0 and total_rows % progress_every_rows == 0:
                 LOGGER.info("%s rows...", total_rows)
 
+            # Flush in batches rather than row-by-row for import performance.
             if len(batch) >= IMPORT_BATCH_SIZE:
                 connection.executemany(insert_sql, batch)
                 batch.clear()
 
+        # Flush any remaining rows that didn't fill a full batch.
         if batch:
             connection.executemany(insert_sql, batch)
 
+    # total_changes is cumulative on the connection, so the delta since we
+    # started tells us how many rows were actually inserted (vs. skipped).
     inserted_rows = connection.total_changes - changes_before
     return total_rows, inserted_rows
 
 
 def load_data(connection: sqlite3.Connection) -> None:
     """Import all supported GTFS files from data directory into the database."""
+    # IMPORT_ORDER ensures parent tables are populated before dependents
+    # that reference them via foreign keys.
     for table_name in IMPORT_ORDER:
         csv_file = FILE_MAP[table_name]
         if csv_file.is_file():
@@ -483,6 +526,8 @@ def load_data(connection: sqlite3.Connection) -> None:
                 elapsed_seconds,
             )
         else:
+            # Optional GTFS files (e.g. transfers, translations) may not be
+            # present in every feed; skip them without failing the run.
             LOGGER.warning("Skipped %s: file not found", csv_file.name)
 
 
@@ -500,11 +545,15 @@ def configure_connection(connection: sqlite3.Connection, importing: bool = False
     # SQLite only applies PRAGMA foreign_keys changes when not in a transaction.
     connection.isolation_level = None
     try:
+        # WAL mode + NORMAL synchronous trade a small durability window for
+        # much faster writes, which matters for large bulk imports.
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA synchronous=NORMAL")
         connection.execute("PRAGMA temp_store=MEMORY")
         connection.execute("PRAGMA cache_size=-256000")
         connection.execute("PRAGMA busy_timeout=5000")
+        # Foreign keys are disabled during import (rows may arrive out of
+        # dependency order within a batch) and re-enabled afterward.
         connection.execute(f"PRAGMA foreign_keys={'OFF' if importing else 'ON'}")
     finally:
         connection.isolation_level = previous_isolation_level
@@ -520,6 +569,8 @@ def open_connection() -> sqlite3.Connection:
     try:
         return sqlite3.connect(DB_PATH)
     except sqlite3.OperationalError as error:
+        # Give a more specific hint when the failure is due to a full disk,
+        # since that's a common and easily-misdiagnosed cause.
         free_bytes = shutil.disk_usage(DB_PATH.parent).free
         if free_bytes == 0:
             raise sqlite3.OperationalError(
@@ -540,6 +591,7 @@ def main() -> None:
         try:
             choice = MenuChoice(raw_choice)
         except ValueError:
+            # Not a recognized menu value; re-prompt instead of crashing.
             LOGGER.warning("Invalid choice. Please try again.")
             continue
 
@@ -566,6 +618,8 @@ def main() -> None:
                         create_tables(connection)
 
                     try:
+                        # Drop indexes for faster bulk inserts, then reload
+                        # all GTFS data in a single transaction.
                         drop_indexes(connection)
                         LOGGER.info("Indexes dropped before import.")
 
@@ -575,6 +629,8 @@ def main() -> None:
                         # Re-enable FK checks outside of the import transaction.
                         configure_connection(connection, importing=False)
 
+                    # With FKs back on, check for any orphaned references
+                    # that slipped in while foreign key checks were off.
                     fk_violation = connection.execute(
                         'SELECT "table", rowid, parent, fkid FROM pragma_foreign_key_check LIMIT 1'
                     ).fetchone()
