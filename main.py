@@ -9,7 +9,7 @@ from typing import TypeAlias
 
 
 DB_PATH = Path(__file__).resolve().parent / "railpulse.db"
-DATA_DIR = Path(__file__).resolve().parent / "data"
+DATA_DIR = Path(__file__).resolve().parent / "src/data"
 PROGRESS_EVERY_ROWS = 10_000
 IMPORT_BATCH_SIZE = 1_000
 LOGGER = logging.getLogger(__name__)
